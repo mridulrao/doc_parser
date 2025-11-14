@@ -113,7 +113,7 @@ if uploaded is not None:
             while t.is_alive():
                 status_ph.info(messages[(i // 10) % len(messages)])
                 progress.progress((i % 100) + 1)
-                time.sleep(0.5)
+                time.sleep(3)
                 i = (i + 5) % 100
 
             t.join()

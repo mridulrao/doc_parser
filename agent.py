@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from livekit_agent.dial_number import generate_prompt_and_call
+#from livekit_agent.dial_number import generate_prompt_and_call
 
 from parse_doc import annotate_and_filter_placeholders
 
