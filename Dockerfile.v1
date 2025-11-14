@@ -1,0 +1,49 @@
+# Dockerfile
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/models
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv ca-certificates curl git \
+ && rm -rf /var/lib/apt/lists/*
+
+# Python deps (vLLM + gateway)
+# Torch (CUDA 12.1), then vLLM + FastAPI stack + image handling
+RUN pip3 install --upgrade pip && \
+    pip3 install --index-url https://download.pytorch.org/whl/cu121 torch && \
+    pip3 install \
+      "vllm==0.11.0" \
+      fastapi uvicorn uvloop httpx orjson pydantic-settings \
+      pillow python-multipart
+
+# App layout
+WORKDIR /app
+# Expect your FastAPI file to be named gateway.py (see CMD below)
+COPY gateway.py /app/gateway.py
+
+# Models cache (persistent volume recommended)
+ENV VLLM_DOWNLOAD_DIR=/models
+RUN mkdir -p /models
+
+# Default env (override in RunPod)
+# MODEL_ID points to DeepSeek-OCR; HOST/PORT control FastAPI gateway
+ENV MODEL_ID="deepseek-ai/DeepSeek-OCR" \
+    GATEWAY_HOST=0.0.0.0 \
+    GATEWAY_PORT=3000 \
+    MAX_TOKENS=8192 \
+    TEMPERATURE=0.0 \
+    NGRAM_SIZE=30 \
+    WINDOW_SIZE=90
+
+# Expose gateway port
+EXPOSE 3000
+
+# Start the FastAPI gateway (vLLM is used in-process to allow logits processor)
+CMD ["/bin/bash", "-lc", "\
+  uvicorn gateway:app --host ${GATEWAY_HOST} --port ${GATEWAY_PORT} \
+"]
