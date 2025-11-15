@@ -9,6 +9,9 @@ from typing import List, Dict
 from loguru import logger
 from openai import AsyncOpenAI
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # =============================================================================
 # OpenAI client (async)
 # =============================================================================
@@ -189,7 +192,7 @@ Fragment {idx + 1} of {len(chunks)}:
         )
 
         response = await client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4.1",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -350,7 +353,7 @@ Return ONLY valid JSON.
         )
 
         response = await client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4.1",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {

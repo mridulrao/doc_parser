@@ -1,0 +1,32 @@
+FROM python:3.10-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    HF_HUB_ENABLE_HF_TRANSFER=1 \
+    HF_HOME=/models \
+    VLLM_DOWNLOAD_DIR=/models \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    build-essential \
+    clang \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+COPY gateway.py /workspace/gateway.py
+RUN mkdir -p /models
+
+RUN pip install --upgrade pip \
+ && pip install \
+        torch==2.6.0 \
+        torchvision==0.21.0 \
+        torchaudio==2.6.0 \
+        --index-url https://download.pytorch.org/whl/cu118 \
+ && pip install "transformers>=4.57.1" \
+ && pip install -U vllm --pre --extra-index-url https://wheels.vllm.ai/nightly \
+ && pip install hf_transfer fastapi "uvicorn[standard]" orjson pillow python-multipart
+
+EXPOSE 8000
+
+CMD ["uvicorn", "gateway:app", "--host", "0.0.0.0", "--port", "8000"]

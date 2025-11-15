@@ -14,7 +14,6 @@ from PIL import Image
 from vllm import LLM, SamplingParams
 from vllm.model_executor.models.deepseek_ocr import NGramPerReqLogitsProcessor
 
-
 # ------------------------------------------------------------------------------
 # Environment / config
 # ------------------------------------------------------------------------------
@@ -29,13 +28,16 @@ TP_SIZE = int(os.getenv("TENSOR_PARALLEL_SIZE", "1"))
 DEFAULT_PROMPT = os.getenv("DEFAULT_PROMPT", "<image>\nFree OCR.")
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
 
-# parse whitelist token ids into a set[int]
+
 def _parse_whitelist(s: str) -> set[int]:
+    """Parse a comma-separated list of ints into a set."""
     try:
         return {int(x.strip()) for x in s.split(",") if x.strip()}
     except Exception:
         return set()
 
+
+whitelist_token_ids = _parse_whitelist(WHITELIST_TOKEN_IDS)
 
 # ------------------------------------------------------------------------------
 # FastAPI app
@@ -57,19 +59,15 @@ app.add_middleware(
 # ------------------------------------------------------------------------------
 # vLLM engine (initialize once per process)
 # ------------------------------------------------------------------------------
-# Keep a single LLM instance per GPU process.
 llm = LLM(
     model=MODEL_ID,
     tensor_parallel_size=TP_SIZE,
     enable_prefix_caching=False,
     mm_processor_cache_gb=0,
     download_dir=DOWNLOAD_DIR,
-    # DeepSeek-OCR needs this logits processor available:
     logits_processors=[NGramPerReqLogitsProcessor],
-    # If repo is gated/private, ensure HF token is in env; vLLM will pick it up.
+    # HF token (if needed) is picked up from env by vLLM / huggingface_hub.
 )
-
-whitelist_token_ids = _parse_whitelist(WHITELIST_TOKEN_IDS)
 
 
 # ------------------------------------------------------------------------------
@@ -87,12 +85,20 @@ def _pil_from_upload(file: UploadFile) -> Image.Image:
         img = Image.open(io.BytesIO(raw)).convert("RGB")
         return img
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid image '{file.filename}': {e}") from e
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid image '{file.filename}': {e}",
+        ) from e
 
 
 # ------------------------------------------------------------------------------
 # Routes
 # ------------------------------------------------------------------------------
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "DeepSeek-OCR gateway is running."}
+
+
 @app.get("/healthz")
 def healthz():
     # quick engine probe (no heavy calls)
@@ -125,13 +131,11 @@ def ocr(
     sampling = SamplingParams(
         temperature=TEMPERATURE,
         max_tokens=MAX_TOKENS,
-        # DeepSeek-OCR specific args (dedup/cleanup over sliding window)
         extra_args=dict(
             ngram_size=NGRAM_SIZE,
             window_size=WINDOW_SIZE,
             whitelist_token_ids=whitelist_token_ids,
         ),
-        # Keep special tokens if you want raw structure; set True for plain text.
         skip_special_tokens=False,
     )
 

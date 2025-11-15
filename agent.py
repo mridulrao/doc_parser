@@ -427,7 +427,7 @@ async def run_form_chat_turn(
 
     # First call: let the model decide whether to call the tool
     first = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4.1",
         messages=messages,
         tools=tools,
         tool_choice="auto",
@@ -503,7 +503,7 @@ async def run_form_chat_turn(
 
         # Second call: the model sees tool results and replies to the user
         second = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4.1",
             messages=messages_with_tools,
             tools=tools,
             tool_choice="auto",
