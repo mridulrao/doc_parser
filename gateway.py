@@ -28,6 +28,10 @@ TP_SIZE = int(os.getenv("TENSOR_PARALLEL_SIZE", "1"))
 DEFAULT_PROMPT = os.getenv("DEFAULT_PROMPT", "<image>\nFree OCR.")
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
 
+# vLLM tuning knobs
+GPU_MEM_UTIL = float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.5"))  # e.g. 0.3–0.6
+MAX_MODEL_LEN = int(os.getenv("MAX_MODEL_LEN", "4096"))  # reduce if you want smaller KV cache
+
 
 def _parse_whitelist(s: str) -> set[int]:
     """Parse a comma-separated list of ints into a set."""
@@ -38,6 +42,34 @@ def _parse_whitelist(s: str) -> set[int]:
 
 
 whitelist_token_ids = _parse_whitelist(WHITELIST_TOKEN_IDS)
+
+# ------------------------------------------------------------------------------
+# Decide where to load model from (local vs HF)
+# ------------------------------------------------------------------------------
+
+def _pick_model_source() -> str:
+    """
+    If download_model.py has already put a full HF snapshot in DOWNLOAD_DIR,
+    prefer that local path. Otherwise fall back to MODEL_ID (HF).
+    """
+    # Heuristic: if there's a config.json in DOWNLOAD_DIR, assume it's a full repo
+    local_config = os.path.join(DOWNLOAD_DIR, "config.json")
+    if os.path.isdir(DOWNLOAD_DIR) and os.path.exists(local_config):
+        print(f"[gateway] Using local model at: {DOWNLOAD_DIR}", flush=True)
+        return DOWNLOAD_DIR
+
+    # If user explicitly pointed to a local path via MODEL_PATH, honor that
+    model_path_env = os.getenv("MODEL_PATH")
+    if model_path_env and os.path.exists(model_path_env):
+        print(f"[gateway] Using MODEL_PATH={model_path_env}", flush=True)
+        return model_path_env
+
+    # Fallback: use HF repo id
+    print(f"[gateway] Using HF model id: {MODEL_ID} (download_dir={DOWNLOAD_DIR})", flush=True)
+    return MODEL_ID
+
+
+MODEL_SOURCE = _pick_model_source()
 
 # ------------------------------------------------------------------------------
 # FastAPI app
@@ -57,18 +89,19 @@ app.add_middleware(
 )
 
 # ------------------------------------------------------------------------------
-# vLLM engine (initialize once per process)
+# vLLM engine (initialize once per process, using pre-downloaded model if present)
 # ------------------------------------------------------------------------------
 llm = LLM(
-    model=MODEL_ID,
+    model=MODEL_SOURCE,          # local path or HF id
     tensor_parallel_size=TP_SIZE,
     enable_prefix_caching=False,
     mm_processor_cache_gb=0,
-    download_dir=DOWNLOAD_DIR,
+    download_dir=DOWNLOAD_DIR,   # vLLM will reuse /models; no re-download needed
     logits_processors=[NGramPerReqLogitsProcessor],
+    gpu_memory_utilization=GPU_MEM_UTIL,
+    max_model_len=MAX_MODEL_LEN,
     # HF token (if needed) is picked up from env by vLLM / huggingface_hub.
 )
-
 
 # ------------------------------------------------------------------------------
 # Models / helpers
@@ -104,10 +137,13 @@ def healthz():
     # quick engine probe (no heavy calls)
     return {
         "status": "ok",
-        "model": MODEL_ID,
+        "model_id": MODEL_ID,
+        "model_source": MODEL_SOURCE,
         "tensor_parallel_size": TP_SIZE,
         "download_dir": DOWNLOAD_DIR,
         "has_hf_token": bool(HF_TOKEN),
+        "gpu_memory_utilization": GPU_MEM_UTIL,
+        "max_model_len": MAX_MODEL_LEN,
     }
 
 
@@ -152,3 +188,20 @@ def ocr(
             texts.append(out.outputs[0].text)
 
     return OCRResponse(texts=texts)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port_env = os.getenv("PORT", "8000")
+    try:
+        port = int(port_env)
+    except ValueError:
+        port = 8000
+
+    uvicorn.run(
+        "gateway:app",
+        host="0.0.0.0",
+        port=port,
+        log_level="info",
+    )

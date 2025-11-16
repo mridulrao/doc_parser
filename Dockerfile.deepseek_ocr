@@ -1,32 +1,55 @@
-FROM python:3.10-slim
+FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
 
-ENV PYTHONUNBUFFERED=1 \
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
     HF_HUB_ENABLE_HF_TRANSFER=1 \
     HF_HOME=/models \
     VLLM_DOWNLOAD_DIR=/models \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    MODEL_ID=deepseek-ai/DeepSeek-OCR \
+    VLLM_GPU_MEMORY_UTILIZATION=0.5 \
+    MAX_MODEL_LEN=4096 \
+    TENSOR_PARALLEL_SIZE=1
 
+# ---- System deps ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 python3.10-venv python3.10-dev python3-pip \
     git \
     build-essential \
     clang \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /workspace
+RUN python3.10 -m pip install --upgrade pip
 
-COPY gateway.py /workspace/gateway.py
+WORKDIR /app
 RUN mkdir -p /models
 
-RUN pip install --upgrade pip \
- && pip install \
-        torch==2.6.0 \
-        torchvision==0.21.0 \
-        torchaudio==2.6.0 \
-        --index-url https://download.pytorch.org/whl/cu118 \
- && pip install "transformers>=4.57.1" \
- && pip install -U vllm --pre --extra-index-url https://wheels.vllm.ai/nightly \
- && pip install hf_transfer fastapi "uvicorn[standard]" orjson pillow python-multipart
+# ---- Copy app code ----
+COPY gateway.py /app/gateway.py
+COPY download_model.py /app/download_model.py
+
+# ---- Python deps ----
+RUN python3.10 -m pip install \
+        "transformers>=4.57.1" \
+        hf_transfer \
+        fastapi \
+        "uvicorn[standard]" \
+        orjson \
+        pillow \
+        python-multipart \
+        huggingface_hub
+
+# vLLM (nightly, CUDA 12.1 compatible)
+RUN python3.10 -m pip install -U vllm --pre --extra-index-url https://wheels.vllm.ai/nightly
+
+# ---- (Optional but common) set HF token at runtime ----
+# You will pass this at `docker run` time:
+#   docker run -e HF_TOKEN=xxx ...
 
 EXPOSE 8000
 
-CMD ["uvicorn", "gateway:app", "--host", "0.0.0.0", "--port", "8000"]
+# ---- Entrypoint: download model then run gateway ----
+# This will:
+# 1) Download the model into /models (idempotent: snapshot_download will reuse existing files)
+# 2) Start the FastAPI app with uvicorn
+CMD ["bash", "-lc", "python3.10 download_model.py && uvicorn gateway:app --host 0.0.0.0 --port 8000"]
